@@ -14,7 +14,7 @@ namespace PCL.Core.MZMC.Helper
                     #if DEBUG
                         builder.SetMinimumLevel(LogLevel.Trace);
                     #else
-                        builder.SetMinimumLevel(LogLevel.Infomation);
+                        builder.SetMinimumLevel(LogLevel.Information);
                     #endif
                 }
             ).CreateLogger("MZMC");

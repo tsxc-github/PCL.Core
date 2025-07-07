@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Runtime.InteropServices;
 using PCL.Core.Model;
+using System.Collections.Concurrent;
 
 namespace PCL.Core.Helper;
 
@@ -21,7 +22,9 @@ public class JavaManage
             select j).ToList();
     }
 
-    private Task? _scanTask = null;
+    private static readonly string[] ExcludeFolderName = ["javapath", "java8path", "common files"];
+
+    private Task? _scanTask;
     /// <summary>
     /// 扫描 Java 会对当前已有的结果进行选择性保留
     /// </summary>
@@ -31,7 +34,7 @@ public class JavaManage
         if (_scanTask == null || _scanTask.IsCompleted)
             _scanTask = Task.Run(async () =>
             {
-                var javaPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var javaPaths = new ConcurrentBag<string>();
 
                 Task[] searchTasks = [
                     Task.Run(() => ScanRegistryForJava(ref javaPaths)),
@@ -44,16 +47,21 @@ public class JavaManage
                 // 记录之前设置为禁用的 Java
                 var disabledJava = from j in _javas where !j.IsEnabled select j.JavaExePath;
                 // 新搜索到的 Java 路径
-                var newJavaList = new HashSet<string>(_javas.Select(x => x.JavaExePath).Concat(javaPaths), StringComparer.OrdinalIgnoreCase);
+                var newJavaList = new HashSet<string>(
+                    _javas
+                        .Select(x => x.JavaExePath)
+                        .Concat(javaPaths)
+                        .Select(x => x.TrimEnd(Path.DirectorySeparatorChar)),
+                    StringComparer.OrdinalIgnoreCase);
 
                 var ret = newJavaList
-                    .Select(x => Java.Parse(x))
+                    .Where(x => !x.Split(Path.DirectorySeparatorChar).Any(part => ExcludeFolderName.Contains(part, StringComparer.OrdinalIgnoreCase)))
+                    .Select(x => Java.Parse(x)!)
                     .Where(x => x != null)
                     .ToList();
-                foreach (var j in ret)
+                foreach (var item in ret.Where(j => disabledJava.Contains(j!.JavaExePath)))
                 {
-                    if (disabledJava.Contains(j.JavaExePath))
-                        j.IsEnabled = false;
+                    item!.IsEnabled = false;
                 }
 
                 _javas = ret;
@@ -94,13 +102,17 @@ public class JavaManage
         return _javas.Any(x => x.JavaExePath == javaExe);
     }
 
-    public async Task<List<Java>> SelectSuitableJava(Version MinVerison, Version MaxVersion)
+    public async Task<List<Java>> SelectSuitableJava(Version minVersion, Version maxVersion)
     {
         if (_javas.Count == 0)
             await ScanJava();
+        var minMajorVersion = minVersion.Major == 1 ? minVersion.Minor : minVersion.Major;
+        var maxMajorVersion = maxVersion.Major == 1 ? maxVersion.Minor : maxVersion.Major;
         return (from j in _javas
-            where j.IsStillAvailable && j.IsEnabled && j.Version >= MinVerison && j.Version <= MaxVersion
-            orderby j.Version, j.Brand
+            where j.IsStillAvailable && j.IsEnabled
+                                     && j.JavaMajorVersion >= minMajorVersion && j.JavaMajorVersion <= maxMajorVersion
+                                     && j.Version >= minVersion && j.Version <= maxVersion
+            orderby j.Version, j.IsJre, j.Brand
             select j).ToList();
     }
 
@@ -113,8 +125,9 @@ public class JavaManage
         _javas = [..from j in _javas where j.IsStillAvailable select j];
     }
 
-    private static void ScanRegistryForJava(ref HashSet<string> javaPaths)
+    private static void ScanRegistryForJava(ref ConcurrentBag<string> javaPaths)
     {
+        // JavaSoft
         var registryPaths = new List<string>
         {
             @"SOFTWARE\JavaSoft\Java Development Kit",
@@ -131,32 +144,55 @@ public class JavaManage
             {
                 using var subKey = regKey.OpenSubKey(subKeyName);
                 var javaHome = subKey?.GetValue("JavaHome") as string;
-                if (string.IsNullOrEmpty(javaHome)) continue;
-                var javaExePath = Path.Combine(javaHome, "bin\\java.exe");
+                if (string.IsNullOrEmpty(javaHome)
+                    || Path.GetInvalidPathChars().Any(x => javaHome.Contains(x)))
+                    continue;
+                var javaExePath = Path.Combine(javaHome, "bin", "java.exe");
                 if (File.Exists(javaExePath)) javaPaths.Add(javaExePath);
+            }
+        }
+
+        //Brand Java Register Path
+        string[] brandKeyNames = [
+            @"SOFTWARE\Azul Systems\Zulu",
+            @"SOFTWARE\BellSoft\Liberica"
+            ];
+        foreach (var key in brandKeyNames)
+        {
+            var zuluKey = Registry.LocalMachine.OpenSubKey(key);
+            if (zuluKey == null) continue;
+            foreach (var subKeyName in zuluKey.GetSubKeyNames())
+            {
+                var path = zuluKey.OpenSubKey(subKeyName)?.GetValue("InstallationPath") as string;
+                if (string.IsNullOrEmpty(path)
+                    || Path.GetInvalidPathChars().Any(x => path.Contains(x)))
+                    continue;
+                var javaExePath = Path.Combine(path, "bin", "java.exe");
+                if (!File.Exists(javaExePath)) continue;
+                javaPaths.Add(javaExePath);
             }
         }
     }
 
     // 可能的目录关键词列表
-    private static readonly string[] mostPossibleKeyWords =
+    private static readonly string[] MostPossibleKeyWords =
     [
         "java", "jdk", "jre",
         "dragonwell", "azul", "zulu", "oracle", "open", "amazon", "corretto", "eclipse" , "temurin", "hotspot", "semeru", "kona", "bellsoft"
     ];
     
-    private static readonly string[] possibleKeyWords =
+    private static readonly string[] PossibleKeyWords =
     [
         "environment", "env", "runtime", "x86_64", "amd64", "arm64",
-        "pcl", "hmcl", "baka", "minecraft", "microsoft"
+        "pcl", "hmcl", "baka", "minecraft"
     ];
 
-    private static readonly string[] totalKeyWords = [..mostPossibleKeyWords.Concat(possibleKeyWords)];
+    private static readonly string[] TotalKeyWords = [..MostPossibleKeyWords.Concat(PossibleKeyWords)];
 
     // 最大文件夹搜索深度
-    const int MAX_SEARCH_DEPTH = 12;
+    const int MaxSearchDepth = 12;
 
-    private static void ScanDefaultInstallPaths(ref HashSet<string> javaPaths)
+    private static void ScanDefaultInstallPaths(ref ConcurrentBag<string> javaPaths)
     {
         // 准备欲搜索目录
         var programFilesPaths = new List<string>
@@ -170,25 +206,22 @@ public class JavaManage
             string[] keyFolders =
             [
                 "Program Files",
-                "Program Files (x86)",
-                "Programs"
+                "Program Files (x86)"
             ];
+            bool IsDriverSuitable(DriveInfo d) => d is { IsReady: true, DriveType: DriveType.Fixed or DriveType.Removable };
             programFilesPaths.AddRange(
                 from driver in DriveInfo.GetDrives()
-                where driver.IsReady
+                where IsDriverSuitable(driver)
                 from keyFolder in keyFolders
                 select Path.Combine(driver.Name, keyFolder));
             // 根目录搜索
-            foreach (var dri in from d in DriveInfo.GetDrives() where d.IsReady && (d.DriveType == DriveType.Fixed || d.DriveType == DriveType.Removable) select d.Name)
+            foreach (var dri in from d in DriveInfo.GetDrives() where IsDriverSuitable(d) select d.Name)
             {
-                var possibleDirs = from dir in Directory.EnumerateDirectories(dri) select dir;
-                foreach (var possibleDir in possibleDirs)
-                {
-                    if (mostPossibleKeyWords.Any(x => possibleDir.IndexOf(x,StringComparison.OrdinalIgnoreCase) >= 0))
-                    {
-                        programFilesPaths.Add(possibleDir);
-                    }
-                }
+                try{
+                    programFilesPaths.AddRange(from dir in Directory.EnumerateDirectories(dri)
+                                            where MostPossibleKeyWords.Any(x => dir.IndexOf(x, StringComparison.OrdinalIgnoreCase) >= 0)
+                                            select dir);
+                }catch(UnauthorizedAccessException){/* 忽略无权限访问的根目录 */}
             }
         }
         else
@@ -198,8 +231,9 @@ public class JavaManage
                 Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
             });
         }
-        programFilesPaths = [.. programFilesPaths.Where(x => !string.IsNullOrEmpty(x) && Directory.Exists(x))];
-
+        programFilesPaths = [.. programFilesPaths.Where(x => !string.IsNullOrEmpty(x) && Directory.Exists(x)).Distinct()];
+        LogWrapper.Info($"[Java] 对下列目录进行广度关键词搜索{Environment.NewLine}{string.Join(Environment.NewLine, programFilesPaths)}");
+        
         // 使用 广度优先搜索 查找 Java 文件
         foreach (var rootPath in programFilesPaths)
         {
@@ -208,20 +242,18 @@ public class JavaManage
             while (queue.Count > 0)
             {
                 var (currentPath, depth) = queue.Dequeue();
-                if (depth > MAX_SEARCH_DEPTH) continue;
+                if (depth > MaxSearchDepth) continue;
                 try
                 {
                     // 只遍历包含关键字的目录
                     var subDirs = Directory.EnumerateDirectories(currentPath)
-                        .Where(x => totalKeyWords.Any(k => x.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0));
+                        .Where(x => TotalKeyWords.Any(k => x.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0));
                     foreach (var dir in subDirs)
                     {
                         // 准备可能的 Java 路径
-                        var potentialJavas = new List<string>
-                        {
-                            Path.Combine(dir, "bin", "java.exe"),
-                            Path.Combine(dir, "jre", "bin", "java.exe")
-                        };
+                        List<string> potentialJavas = [
+                            Path.Combine(dir, "java.exe")
+                            ];
                         potentialJavas = [.. potentialJavas.Where(File.Exists)];
                         
                         // 存在 Java，节点达到目标
@@ -236,7 +268,7 @@ public class JavaManage
         }
     }
 
-    private static void ScanPathEnvironmentVariable(ref HashSet<string> javaPaths)
+    private static void ScanPathEnvironmentVariable(ref ConcurrentBag<string> javaPaths)
     {
         var pathEnv = Environment.GetEnvironmentVariable("PATH");
         if (string.IsNullOrEmpty(pathEnv)) return;
@@ -244,15 +276,15 @@ public class JavaManage
         var paths = pathEnv.Split([';'], StringSplitOptions.RemoveEmptyEntries);
         foreach (var targetPath in paths)
         {
+            if (Path.GetInvalidPathChars().Any(x => targetPath.Contains(x)))
+                continue;
             var javaExePath = Path.Combine(targetPath, "java.exe");
             if (File.Exists(javaExePath))
-            {
                 javaPaths.Add(javaExePath);
-            }
         }
     }
 
-    private static void ScanMicrosoftStoreJava(ref HashSet<string> javaPaths)
+    private static void ScanMicrosoftStoreJava(ref ConcurrentBag<string> javaPaths)
     {
         var storeJavaFolder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -280,6 +312,7 @@ public class JavaManage
                     var javaExePath = Path.Combine(versionDir, "bin", "java.exe");
                     if (File.Exists(javaExePath))
                     {
+                        LogWrapper.Info($"[Java] 搜寻到可能的 Microsoft 官方 Java {javaExePath}");
                         javaPaths.Add(javaExePath);
                     }
                 }
@@ -318,6 +351,7 @@ public class JavaManage
     }
 }
 
+[Serializable]
 public class JavaLocalCache
 {
     public string Path { get; set; } = "";

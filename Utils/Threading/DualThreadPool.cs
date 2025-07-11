@@ -18,7 +18,6 @@ public class DualThreadPool
 
     private readonly TaskFactory _ioFactory;
     private readonly TaskFactory _cpuFactory;
-    private readonly CancellationTokenSource _cts = new();
 
     /// <summary>
     /// 初始化 <see cref="DualThreadPool"/> 实例
@@ -33,17 +32,16 @@ public class DualThreadPool
 
         var ioScheduler = new LimitedConcurrencyLevelTaskScheduler(maxThread);
         var cpuScheduler = new LimitedConcurrencyLevelTaskScheduler(maxThread);
-        var cancellationToken = _cts.Token;
 
         // DenyChildAttach 防止子任务跑到外层 scheduler
         _ioFactory = new TaskFactory(
-            cancellationToken,
+            CancellationToken.None,
             TaskCreationOptions.DenyChildAttach,
             TaskContinuationOptions.None,
             ioScheduler);
 
         _cpuFactory = new TaskFactory(
-            cancellationToken,
+            CancellationToken.None,
             TaskCreationOptions.DenyChildAttach,
             TaskContinuationOptions.None,
             cpuScheduler);
@@ -68,9 +66,4 @@ public class DualThreadPool
     /// 提交一段异步 CPU 密集工作
     /// </summary>
     public Task QueueCpu(Func<Task> work) => _cpuFactory.StartNew(work).Unwrap();
-
-    /// <summary>
-    /// 取消所有正在执行的工作
-    /// </summary>
-    public void CancelAll() => _cts.Cancel();
 }

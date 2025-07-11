@@ -191,6 +191,10 @@
     <Compile Include="Model\Files\FileTransfer.cs" />
     <Compile Include="Model\Files\IFileTask.cs" />
     <Compile Include="Model\Java.cs" />
+    <Compile Include="MZMC\API\SDK.cs" />
+    <Compile Include="MZMC\Helper\Converter.cs" />
+    <Compile Include="MZMC\Init.cs" />
+    <Compile Include="MZMC\Message.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Service\ApplicationService.cs" />
     <Compile Include="Service\FileService.cs" />

@@ -35,14 +35,14 @@ public class FileTask(IEnumerable<FileItem> items, bool ignoreResult = false) : 
     public FileTask(params FileItem[] items) : this(items.AsEnumerable()) { }
     
     /// <summary>
-    /// Event invoked with the finished item and the result after a process finished
+    /// Event invoked after a process finished
     /// </summary>
     public event Action<FileItem, object?>? ProcessFinished;
     
     /// <summary>
-    /// Event invoked with the result after the task finished
+    /// Event invoked after the task finished
     /// </summary>
-    public event Action<object?>? TaskFinished;
+    public event Action? TaskFinished;
 
     #region Implementation
 
@@ -52,14 +52,15 @@ public class FileTask(IEnumerable<FileItem> items, bool ignoreResult = false) : 
     
     public virtual bool OnProcessFinished(FileItem item, object? result)
     {
-        if (ProcessFinished == null) return IgnoreResult;
+        if (IgnoreResult) return true;
+        if (ProcessFinished == null) return false;
         ProcessFinished.Invoke(item, result);
         return true;
     }
 
-    public virtual void OnTaskFinished(object? result)
+    public virtual void OnTaskFinished()
     {
-        TaskFinished?.Invoke(result);
+        TaskFinished?.Invoke();
     }
 
     #endregion

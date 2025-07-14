@@ -49,6 +49,8 @@
         <PackageReference Include="Microsoft.Xaml.Behaviors.Wpf" Version="1.1.135" />
         <!-- 语言和系统特性 -->
         <PackageReference Include="Microsoft.CSharp" Version="4.7.0" PrivateAssets="all" />
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+        <PackageReference Include="RestSharp" Version="113.0.0" />
         <PackageReference Include="System.Management" Version="9.0.9" PrivateAssets="all" />
         <!-- 归档文件 -->
         <PackageReference Include="SharpZipLib" Version="1.4.2" PrivateAssets="all" />

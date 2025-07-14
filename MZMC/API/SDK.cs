@@ -50,7 +50,10 @@ namespace PCL.Core.MZMC.API
 
             private void _SaveUserInfo()
             {
-                Init.Config.AppSettings.Settings.Add("UserToken", this._token);
+	            if(Init.Config.AppSettings.Settings["UserToken"]==null)
+					Init.Config.AppSettings.Settings.Add("UserToken", this._token);
+	            else
+					Init.Config.AppSettings.Settings["UserToken"].Value = this._token;
                 Init.Config.Save(ConfigurationSaveMode.Modified);
             }
 
